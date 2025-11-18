@@ -193,11 +193,18 @@ async def start_matching_btn(message: types.Message):
     matching_tasks[chat_id] = task
 
 
+# FIXED: IGNORE commands & buttons
 @dp.message(F.text)
 async def receive_token(message: types.Message):
     chat_id = message.chat.id
+
+    # ignore commands & system texts
+    if message.text.startswith("/") or message.text in ["Start Matching", "Stop Matching"]:
+        return
+
     if chat_id in user_tokens:
         return await message.answer("Token already saved.")
+
     user_tokens[chat_id] = message.text.strip()
     keyboard = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="Start Matching")]],
@@ -211,11 +218,17 @@ async def start(message: types.Message):
     await message.answer("Send Meeff Token.")
 
 
+# FIXED: Now works with /seturl@whositbot
 @dp.message(Command("seturl"))
 async def set_url(message: types.Message):
-    url = message.text.replace("/seturl", "").strip()
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        return await message.answer("Please provide a URL.")
+
+    url = parts[1].strip()
     if not url.startswith("https://"):
         return await message.answer("Invalid URL.")
+
     await config.update_one({"_id": "explore_url"}, {"$set": {"url": url}}, upsert=True)
     await message.answer("✔️ URL saved.")
 
