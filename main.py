@@ -31,6 +31,7 @@ HEADERS_TEMPLATE = {
 
 ANSWER_URL = "https://api.meeff.com/user/undoableAnswer/v5/?userId={user_id}&isOkay=1"
 
+
 async def fetch_users(session, explore_url):
     async with session.get(explore_url) as res:
         status = res.status
@@ -139,7 +140,7 @@ async def start_matching(chat_id, token, explore_url):
     except Exception as e:
         await stat_msg.edit_text(f"Error: {e}")
 
-    # 🔥 ALWAYS SHOW FINAL STATUS (even after loop exit)
+    # 🔥 ALWAYS show final status after loop exits
     if stop_reason:
         try:
             await stat_msg.edit_text(
@@ -156,6 +157,7 @@ async def start_matching(chat_id, token, explore_url):
     user_tokens.pop(chat_id, None)
 
 
+# 🛑 STOP MATCHING BUTTON HANDLER
 @dp.message(Command("stop"))
 @dp.message(F.text == "Stop Matching")
 async def stop(message: types.Message):
@@ -163,25 +165,16 @@ async def stop(message: types.Message):
     task = matching_tasks.pop(chat_id, None)
     if task:
         task.cancel()
-        await message.answer("Stopped.")
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="Start Matching")]],
+            resize_keyboard=True
+        )
+        await message.answer("Stopped.", reply_markup=keyboard)
     else:
         await message.answer("Not running.")
 
 
-@dp.message(Command("seturl"))
-async def set_url(message: types.Message):
-    url = message.text.replace("/seturl", "").strip()
-    if not url.startswith("https://"):
-        return await message.answer("Invalid URL.")
-    await config.update_one({"_id": "explore_url"}, {"$set": {"url": url}}, upsert=True)
-    await message.answer("✔️ URL saved.")
-
-
-@dp.message(Command("start"))
-async def start(message: types.Message):
-    await message.answer("Send Meeff Token.")
-
-
+# 🟢 START MATCHING BUTTON HANDLER  (FIXED 🔥)
 @dp.message(F.text == "Start Matching")
 async def start_matching_btn(message: types.Message):
     chat_id = message.chat.id
@@ -192,17 +185,44 @@ async def start_matching_btn(message: types.Message):
         return await message.answer("Use /seturl first.")
     explore_url = data["url"]
     token = user_tokens[chat_id]
+
+    # 🔥 SHOW STOP BUTTON HERE
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="Stop Matching")]],
+        resize_keyboard=True
+    )
+    await message.answer("Matching Started...", reply_markup=keyboard)
+
     task = asyncio.create_task(start_matching(chat_id, token, explore_url))
     matching_tasks[chat_id] = task
 
 
+# TOKEN SAVE
 @dp.message(F.text)
 async def receive_token(message: types.Message):
     chat_id = message.chat.id
     if chat_id in user_tokens:
         return await message.answer("Token already saved.")
     user_tokens[chat_id] = message.text.strip()
-    await message.answer("✔️ Token saved. Send 'Start Matching'.")
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="Start Matching")]],
+        resize_keyboard=True
+    )
+    await message.answer("✔️ Token saved.", reply_markup=keyboard)
+
+
+@dp.message(Command("start"))
+async def start(message: types.Message):
+    await message.answer("Send Meeff Token.")
+
+
+@dp.message(Command("seturl"))
+async def set_url(message: types.Message):
+    url = message.text.replace("/seturl", "").strip()
+    if not url.startswith("https://"):
+        return await message.answer("Invalid URL.")
+    await config.update_one({"_id": "explore_url"}, {"$set": {"url": url}}, upsert=True)
+    await message.answer("✔️ URL saved.")
 
 
 async def main():
