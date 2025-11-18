@@ -4,11 +4,14 @@ import random
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.client.default import DefaultBotProperties
 from motor.motor_asyncio import AsyncIOMotorClient
 
+# ================= CONFIG =================
 BOT_TOKEN = "8300519461:AAGub3h_FqGkggWkGGE95Pgh8k4u6deI_F4"
 MONGO_URI = "mongodb+srv://itxcriminal:qureshihashmI1@cluster0.jyqy9.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 
+# ==========================================
 user_tokens = {}
 matching_tasks = {}
 user_stats = {}
@@ -17,8 +20,10 @@ mongo = AsyncIOMotorClient(MONGO_URI)
 db = mongo["meeff_db"]
 config = db["config"]
 
-bot = Bot(BOT_TOKEN)
-dp = Dispatcher()
+# BOT MUST BE INITIALIZED LIKE THIS FOR AIROGRAM V3
+bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+dp = Dispatcher()  # router auto active in v3
+
 
 HEADERS_TEMPLATE = {
     "User-Agent": "okhttp/5.1.0 (Linux; Android 13; Pixel 6 Build/TQ3A.230901.001)",
@@ -156,6 +161,7 @@ async def start_matching(chat_id, token, explore_url):
     user_tokens.pop(chat_id, None)
 
 
+# ========== STOP COMMAND ==========
 @dp.message(Command("stop"))
 @dp.message(F.text == "Stop Matching")
 async def stop(message: types.Message):
@@ -193,12 +199,10 @@ async def start_matching_btn(message: types.Message):
     matching_tasks[chat_id] = task
 
 
-# FIXED: IGNORE commands & buttons
+# ========== TOKEN RECEVE ==========
 @dp.message(F.text)
 async def receive_token(message: types.Message):
     chat_id = message.chat.id
-
-    # ignore commands & system texts
     if message.text.startswith("/") or message.text in ["Start Matching", "Stop Matching"]:
         return
 
@@ -213,29 +217,27 @@ async def receive_token(message: types.Message):
     await message.answer("✔️ Token saved.", reply_markup=keyboard)
 
 
+# ========= BOT COMMANDS ==========
 @dp.message(Command("start"))
 async def start(message: types.Message):
     await message.answer("Send Meeff Token.")
 
 
-# FIXED: Now works with /seturl@whositbot
 @dp.message(Command("seturl"))
 async def set_url(message: types.Message):
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         return await message.answer("Please provide a URL.")
-
     url = parts[1].strip()
     if not url.startswith("https://"):
         return await message.answer("Invalid URL.")
-
     await config.update_one({"_id": "explore_url"}, {"$set": {"url": url}}, upsert=True)
     await message.answer("✔️ URL saved.")
 
 
+# ========= RUN BOT ==========
 async def main():
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
