@@ -140,7 +140,7 @@ async def start_matching(chat_id, token, explore_url):
     except Exception as e:
         await stat_msg.edit_text(f"Error: {e}")
 
-    # 🔥 Always show final status
+    # 🔥 ALWAYS show final status after loop exits
     if stop_reason:
         try:
             await stat_msg.edit_text(
@@ -157,7 +157,7 @@ async def start_matching(chat_id, token, explore_url):
     user_tokens.pop(chat_id, None)
 
 
-# 🔴 STOP MATCHING BUTTON
+# 🛑 STOP MATCHING BUTTON HANDLER
 @dp.message(Command("stop"))
 @dp.message(F.text == "Stop Matching")
 async def stop(message: types.Message):
@@ -174,33 +174,30 @@ async def stop(message: types.Message):
         await message.answer("Not running.")
 
 
-# 🟢 START MATCHING BUTTON — CLEAN VERSION (NO TEXT SENT)
+# 🟢 START MATCHING BUTTON HANDLER  (FIXED 🔥)
 @dp.message(F.text == "Start Matching")
 async def start_matching_btn(message: types.Message):
     chat_id = message.chat.id
     if chat_id not in user_tokens:
         return await message.answer("Send token first.")
-
     data = await config.find_one({"_id": "explore_url"})
     if not data:
         return await message.answer("Use /seturl first.")
-
     explore_url = data["url"]
     token = user_tokens[chat_id]
 
+    # 🔥 SHOW STOP BUTTON HERE
     keyboard = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="Stop Matching")]],
         resize_keyboard=True
     )
-
-    # 👉 No message text — only keyboard
-    await message.answer(reply_markup=keyboard)
+    await message.answer("Matching Started...", reply_markup=keyboard)
 
     task = asyncio.create_task(start_matching(chat_id, token, explore_url))
     matching_tasks[chat_id] = task
 
 
-# TOKEN SAVING
+# TOKEN SAVE
 @dp.message(F.text)
 async def receive_token(message: types.Message):
     chat_id = message.chat.id
