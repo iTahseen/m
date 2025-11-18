@@ -31,7 +31,6 @@ HEADERS_TEMPLATE = {
 
 ANSWER_URL = "https://api.meeff.com/user/undoableAnswer/v5/?userId={user_id}&isOkay=1"
 
-
 async def fetch_users(session, explore_url):
     async with session.get(explore_url) as res:
         status = res.status
@@ -52,12 +51,12 @@ async def start_matching(chat_id, token, explore_url):
     stats = {"requests": 0, "cycles": 0, "errors": 0}
     user_stats[chat_id] = stats
 
-    stat_msg = await bot.send_message(chat_id, "Loading stats...")  # will be replaced ASAP
+    stat_msg = await bot.send_message(chat_id, "Loading stats...")
 
     timeout = aiohttp.ClientTimeout(total=30)
     connector = aiohttp.TCPConnector(ssl=False, limit_per_host=10)
     empty_count = 0
-    stop_reason = None  # will be shown inside stat_msg
+    stop_reason = None
 
     try:
         async with aiohttp.ClientSession(timeout=timeout, connector=connector, headers=headers) as session:
@@ -102,6 +101,7 @@ async def start_matching(chat_id, token, explore_url):
                     user_id = user.get("_id")
                     if not user_id:
                         continue
+
                     task = asyncio.create_task(answer_user(user_id))
                     tasks.append(task)
                     stats["requests"] += 1
@@ -138,6 +138,19 @@ async def start_matching(chat_id, token, explore_url):
 
     except Exception as e:
         await stat_msg.edit_text(f"Error: {e}")
+
+    # 🔥 ALWAYS SHOW FINAL STATUS (even after loop exit)
+    if stop_reason:
+        try:
+            await stat_msg.edit_text(
+                f"Live Stats:\n"
+                f"Requests: {stats['requests']}\n"
+                f"Cycles: {stats['cycles']}\n"
+                f"Errors: {stats['errors']}\n\n"
+                f"⚠️ {stop_reason}"
+            )
+        except:
+            pass
 
     matching_tasks.pop(chat_id, None)
     user_tokens.pop(chat_id, None)
