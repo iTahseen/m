@@ -10,23 +10,25 @@ from motor.motor_asyncio import AsyncIOMotorClient
 #   CONFIG
 ###########################################
 
-BOT_TOKEN = "8300519461:AAGub3h_FqGkggWkGGE95Pgh8k4u6deI_F4"  # YOUR BOT TOKEN
+BOT_TOKEN = "8300519461:AAGub3h_FqGkggWkGGE95Pgh8k4u6deI_F4"
 MONGO_URI = "mongodb+srv://itxcriminal:qureshihashmI1@cluster0.jyqy9.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 
-user_tokens = {}            # Store Meeff token temporarily (only in memory)
-matching_tasks = {}         # Track running matching tasks per user
-user_stats = {}             # Live stats per user
+# Temporary storage
+user_tokens = {}
+matching_tasks = {}
+user_stats = {}
 
-# MongoDB setup
+# MongoDB
 mongo = AsyncIOMotorClient(MONGO_URI)
 db = mongo["meeff_db"]
 config = db["config"]
 
+# Telegram Bot
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
 ###########################################
-#   MEEFF MATCHING FUNCTIONS
+#   MEEFF API FUNCTIONS
 ###########################################
 
 HEADERS_TEMPLATE = {
@@ -43,7 +45,22 @@ ANSWER_URL = "https://api.meeff.com/user/undoableAnswer/v5/?userId={user_id}&isO
 
 async def fetch_users(session, explore_url):
     async with session.get(explore_url) as res:
-        return res.status, await res.json(content_type=None) if res.status == 200 else None
+        status = res.status
+
+        if status != 200:
+            try:
+                error_text = await res.text()
+                print("\n========= MEEFF ERROR =========")
+                print(f"STATUS  : {status}")
+                print(f"RESPONSE:\n{error_text}")
+                print("================================\n")
+            except:
+                print(f"[Non-JSON Error] Status: {status}")
+
+            return status, None
+
+        data = await res.json(content_type=None)
+        return status, data
 
 
 async def start_matching(chat_id, token, explore_url):
@@ -53,24 +70,33 @@ async def start_matching(chat_id, token, explore_url):
     stats = {"requests": 0, "cycles": 0, "errors": 0}
     user_stats[chat_id] = stats
 
+    stat_message = await bot.send_message(chat_id, "🚀 Matching started...")
+
+    empty_count = 0
+    timeout = aiohttp.ClientTimeout(total=30)
+    connector = aiohttp.TCPConnector(ssl=False, limit_per_host=10)
+
+    # Change button to STOP
+    stop_keyboard = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="🛑 Stop Matching")]],
+        resize_keyboard=True
+    )
+    await bot.send_message(chat_id, "🛑 Matching in progress...", reply_markup=stop_keyboard)
+
     try:
-        timeout = aiohttp.ClientTimeout(total=30)
-        connector = aiohttp.TCPConnector(ssl=False, limit_per_host=10)
-
         async with aiohttp.ClientSession(timeout=timeout, connector=connector, headers=headers) as session:
-            while True:
-                if chat_id not in matching_tasks:  # STOP signal
-                    break
-
+            while chat_id in matching_tasks:
                 status, data = await fetch_users(session, explore_url)
 
-                if status == 401:  # TOKEN EXPIRED
-                    await bot.send_message(chat_id, "❌ *Token expired — send a new Meeff token!*", parse_mode="Markdown")
-                    matching_tasks.pop(chat_id, None)
-                    user_tokens.pop(chat_id, None)
+                if status == 401:
+                    await stat_message.edit_text("❌ Token expired! Send a new token.")
                     break
 
                 if data is None or not data.get("users"):
+                    empty_count += 1
+                    if empty_count >= 5:
+                        await stat_message.edit_text("⚠ No users found. Stopping.")
+                        break
                     await asyncio.sleep(1)
                     continue
 
@@ -90,58 +116,64 @@ async def start_matching(chat_id, token, explore_url):
 
                 stats["cycles"] += 1
 
-                # LIVE STATS
-                msg = (
-                    "📊 *Live Matching Stats*\n"
-                    f"🚀 Requests Sent: `{stats['requests']}`\n"
+                await stat_message.edit_text(
+                    f"📊 *Live Stats:*\n"
+                    f"🚀 Requests: `{stats['requests']}`\n"
                     f"🔄 Cycles: `{stats['cycles']}`\n"
-                    f"⚠ Errors: `{stats['errors']}`"
+                    f"⚠ Errors: `{stats['errors']}`\n\n"
+                    f"🛑 Send /stop or press stop button.",
+                    parse_mode="Markdown"
                 )
-                try:
-                    await bot.send_message(chat_id, msg, parse_mode="Markdown")
-                except:
-                    pass
 
-                await asyncio.sleep(random.uniform(1.0, 2.0))
+                await asyncio.sleep(random.uniform(1, 2))
 
     except Exception as e:
         stats["errors"] += 1
-        await bot.send_message(chat_id, f"⚠ ERROR: `{e}`", parse_mode="Markdown")
+        await stat_message.edit_text(f"⚠ ERROR: `{e}`", parse_mode="Markdown")
+
+    # Reset buttons after stop
+    start_keyboard = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="🔥 Start Matching")]],
+        resize_keyboard=True
+    )
+    await bot.send_message(chat_id, "🛑 Matching stopped.", reply_markup=start_keyboard)
+    matching_tasks.pop(chat_id, None)
+    user_tokens.pop(chat_id, None)
 
 
 ###########################################
-#   TELEGRAM HANDLERS
+#   COMMAND HANDLERS
 ###########################################
 
 @dp.message(Command("start"))
-async def start_handler(message: types.Message):
-    await message.answer("👋 *Send Meeff token to continue!*", parse_mode="Markdown")
+async def start(message: types.Message):
+    await message.answer("👋 Send Meeff Token to continue.")
 
 
 @dp.message(Command("seturl"))
 async def set_url(message: types.Message):
     url = message.text.replace("/seturl", "").strip()
     if not url.startswith("https://"):
-        return await message.answer("❌ Invalid URL format.")
+        return await message.answer("❌ Invalid URL")
     await config.update_one({"_id": "explore_url"}, {"$set": {"url": url}}, upsert=True)
-    await message.answer("✅ URL saved!")
-
-
-@dp.message(Command("geturl"))
-async def get_url(message: types.Message):
-    data = await config.find_one({"_id": "explore_url"})
-    if not data:
-        return await message.answer("❌ No URL set yet.")
-    await message.answer(f"🌍 Explore URL:\n`{data['url']}`", parse_mode="Markdown")
+    await message.answer("✔ URL Saved!")
 
 
 @dp.message(Command("stop"))
-async def stop_matching(message: types.Message):
+@dp.message(F.text == "🛑 Stop Matching")
+async def stop(message: types.Message):
     chat_id = message.chat.id
     task = matching_tasks.pop(chat_id, None)
+
     if task:
         task.cancel()
         await message.answer("🛑 Matching Stopped.")
+
+        start_keyboard = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="🔥 Start Matching")]],
+            resize_keyboard=True
+        )
+        await message.answer("Ready to start again.", reply_markup=start_keyboard)
     else:
         await message.answer("⚠ No matching is running.")
 
@@ -155,27 +187,27 @@ async def start_matching_btn(message: types.Message):
     token = user_tokens[chat_id]
     data = await config.find_one({"_id": "explore_url"})
     if not data:
-        return await message.answer("❌ Use /seturl <url> first.")
+        return await message.answer("❌ Use /seturl first.")
 
     explore_url = data["url"]
-    await message.answer("🚀 Matching started!")
+
+    await message.answer("🚀 Starting matching...")
     task = asyncio.create_task(start_matching(chat_id, token, explore_url))
     matching_tasks[chat_id] = task
 
 
 @dp.message(F.text)
-async def token_receiver(message: types.Message):
+async def receive_token(message: types.Message):
     chat_id = message.chat.id
     if chat_id in user_tokens:
         return await message.answer("✔ Token already saved.")
-
+    
     user_tokens[chat_id] = message.text.strip()
-
     keyboard = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="🔥 Start Matching")], [KeyboardButton(text="/stop")]],
+        keyboard=[[KeyboardButton(text="🔥 Start Matching")]],
         resize_keyboard=True
     )
-    await message.answer("✔ Token received!", reply_markup=keyboard)
+    await message.answer("✔ Token saved!", reply_markup=keyboard)
 
 
 ###########################################
